@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="NOUR">
+<title>NOUR</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; touch-action:none; user-select:none; -webkit-user-select:none; }
+html, body { background:#0d1117; width:100%; height:100%; overflow:hidden; }
+#game-wrapper {
+  background:#0d1117;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  min-height:100vh;
+  min-height:100dvh;
+  padding:10px 8px 16px;
+  font-family:Arial, sans-serif;
+}
+#title { color:white; font-size:28px; font-weight:bold; letter-spacing:4px; margin-bottom:4px; }
+#score-label { color:#f1c40f; font-size:18px; font-weight:bold; margin-bottom:10px; transition:all 0.1s; }
+#game-container { position:relative; }
+#canvas-grille { display:block; }
+#drag-canvas { position:absolute; top:0; left:0; pointer-events:none; }
+#formes-zone {
+  display:flex;
+  justify-content:space-around;
+  align-items:center;
+  width:100%;
+  height:120px;
+  margin-top:8px;
+}
+.forme-canvas { cursor:grab; }
+#btn-rejouer {
+  display:none;
+  margin-top:14px;
+  background:#e91e8c;
+  color:white;
+  border:none;
+  border-radius:12px;
+  padding:13px 36px;
+  font-size:17px;
+  font-weight:bold;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+</style>
+</head>
+<body>
+<div id="game-wrapper">
+  <div id="title">NOUR</div>
+  <div id="score-label">Score : 0</div>
+  <div id="game-container">
+    <canvas id="canvas-grille"></canvas>
+    <canvas id="drag-canvas"></canvas>
+  </div>
+  <div id="formes-zone">
+    <canvas class="forme-canvas" id="fc0" width="110" height="110"></canvas>
+    <canvas class="forme-canvas" id="fc1" width="110" height="110"></canvas>
+    <canvas class="forme-canvas" id="fc2" width="110" height="110"></canvas>
+  </div>
+  <button id="btn-rejouer">Rejouer</button>
+</div>
+
+<script>
+const TAILLE_GRILLE = 8;
+const COULEUR_GRILLE = "#1e272e";
+const FORMES = [
+  {forme:[[0,0],[0,1],[0,2]], couleur:"#2980b9"},
+  {forme:[[0,0],[1,0],[2,0]], couleur:"#e91e8c"},
+  {forme:[[0,0],[0,1],[1,0],[1,1]], couleur:"#5d6d7e"},
+  {forme:[[0,0],[1,0],[2,0],[2,1]], couleur:"#2471a3"},
+  {forme:[[0,0],[1,0],[2,0],[2,-1]], couleur:"#ff69b4"},
+  {forme:[[0,0],[0,1],[0,2],[1,0]], couleur:"#1a5276"},
+  {forme:[[0,0],[0,1],[0,2],[0,3]], couleur:"#2e86c1"},
+  {forme:[[0,0],[1,0],[2,0],[3,0]], couleur:"#c2185b"},
+  {forme:[[0,0],[0,1],[1,1],[1,2]], couleur:"#1f618d"},
+  {forme:[[0,0],[0,1],[0,2],[1,1]], couleur:"#ff4081"},
+  {forme:[[0,0],[1,0],[1,1],[2,1]], couleur:"#566573"},
+  {forme:[[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]], couleur:"#ad1457"},
+];
+
+let TC = 40;
+let grille, score, formesActuelles, animEnCours, gameOver;
+
+function calcTC() {
+  const maxW = Math.floor((window.innerWidth - 20) / 8);
+  const maxH = Math.floor((window.innerHeight - 220) / 8);
+  return Math.min(maxW, maxH, 52);
+}
+
+function init() {
+  TC = calcTC();
+  const cg = document.getElementById('canvas-grille');
+  cg.width = TC * 8; cg.height = TC * 8;
+  const dc = document.getElementById('drag-canvas');
+  dc.width = TC * 8; dc.height = TC * 8;
+  document.getElementById('formes-zone').style.width = (TC*8)+'px';
+
+  grille = Array.from({length:8}, ()=>Array(8).fill(null));
+  score = 0; animEnCours = false; gameOver = false;
+  document.getElementById('score-label').textContent = 'Score : 0';
+  document.getElementById('score-label').style.fontSize = '18px';
+  document.getElementById('score-label').style.color = '#f1c40f';
+  document.getElementById('btn-rejouer').style.display = 'none';
+  formesActuelles = [rndForme(), rndForme(), rndForme()];
+  dessinerGrille();
+  dessinerFormes();
+}
+
+function rndForme() {
+  return JSON.parse(JSON.stringify(FORMES[Math.floor(Math.random()*FORMES.length)]));
+}
+
+function getCtxGrille() { return document.getElementById('canvas-grille').getContext('2d'); }
+function getCtxDrag() { return document.getElementById('drag-canvas').getContext('2d'); }
+
+function roundRect(ctx, x, y, w, h, r) {
+  if(w<2||h<2){ctx.rect(x,y,w,h);return;}
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y);
+  ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r);
+  ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h);
+  ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r);
+  ctx.quadraticCurveTo(x,y,x+r,y);
+  ctx.closePath();
+}
+
+function dessinerGrille(highlights) {
+  const ctx = getCtxGrille();
+  ctx.clearRect(0,0,TC*8,TC*8);
+  for(let l=0;l<8;l++){
+    for(let c=0;c<8;c++){
+      const x=c*TC, y=l*TC;
+      const hl = highlights && highlights.find(h=>h[0]===l&&h[1]===c);
+      ctx.fillStyle = hl ? hl[2] : (grille[l][c] || COULEUR_GRILLE);
+      ctx.beginPath();
+      roundRect(ctx, x+1, y+1, TC-4, TC-4, 5);
+      ctx.fill();
+      ctx.strokeStyle='#0d1117'; ctx.lineWidth=2; ctx.stroke();
+    }
+  }
+}
+
+function dessinerBlocs(ctx, forme, ox, oy, taille, couleur, alpha=1, outlineColor='#0d1117') {
+  ctx.globalAlpha = alpha;
+  for(const [l,c] of forme){
+    const x=ox+c*taille, y=oy+l*taille;
+    ctx.fillStyle = couleur;
+    ctx.beginPath();
+    roundRect(ctx, x+1, y+1, taille-4, taille-4, 4);
+    ctx.fill();
+    ctx.strokeStyle=outlineColor; ctx.lineWidth=2; ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+}
+
+function dessinerFormes() {
+  for(let i=0;i<3;i++){
+    const fc = document.getElementById('fc'+i);
+    const ctx = fc.getContext('2d');
+    ctx.clearRect(0,0,110,110);
+    const fd = formesActuelles[i];
+    if(!fd) continue;
+    const forme = fd.forme;
+    const taille = 26;
+    const minC=Math.min(...forme.map(f=>f[1])), maxC=Math.max(...forme.map(f=>f[1]));
+    const minL=Math.min(...forme.map(f=>f[0])), maxL=Math.max(...forme.map(f=>f[0]));
+    const ox=(110-(maxC-minC+1)*taille)/2-minC*taille;
+    const oy=(110-(maxL-minL+1)*taille)/2-minL*taille;
+    dessinerBlocs(ctx, forme, ox, oy, taille, fd.couleur);
+  }
+}
+
+function peutPlacer(forme, l, c) {
+  for(const [dl,dc] of forme){
+    const nl=l+dl, nc=c+dc;
+    if(nl<0||nl>=8||nc<0||nc>=8) return false;
+    if(grille[nl][nc]) return false;
+  }
+  return true;
+}
+
+function flashScore() {
+  const el = document.getElementById('score-label');
+  el.style.color='#fff'; el.style.fontSize='22px';
+  setTimeout(()=>{ el.style.color='#f1c40f'; el.style.fontSize='18px'; }, 200);
+}
+
+function verifierEtAnimer(cb) {
+  const lignes=[], cols=[];
+  for(let l=0;l<8;l++) if(grille[l].every(v=>v)) lignes.push(l);
+  for(let c=0;c<8;c++) if(grille.every(r=>r[c])) cols.push(c);
+  if(!lignes.length&&!cols.length){ cb(); return; }
+
+  const casesMap=new Map();
+  for(const l of lignes) for(let c=0;c<8;c++) casesMap.set(l+','+c,[l,c,grille[l][c]]);
+  for(const c of cols) for(let l=0;l<8;l++) casesMap.set(l+','+c,[l,c,grille[l][c]]);
+  const casesArr=[...casesMap.values()];
+
+  let pts=lignes.length*10+cols.length*10;
+  if(lignes.length+cols.length>=2) pts+=(lignes.length+cols.length)*5;
+  score+=pts;
+  document.getElementById('score-label').textContent='Score : '+score;
+  flashScore();
+
+  animerFlash(casesArr,0,()=>{
+    animerEclatement(casesArr,0,8,()=>{
+      for(const l of lignes) for(let c=0;c<8;c++) grille[l][c]=null;
+      for(const c of cols) for(let l=0;l<8;l++) grille[l][c]=null;
+      dessinerGrille();
+      cb();
+    });
+  });
+}
+
+const flashCouleurs=['#ffffff','#fffde7','#fff9c4'];
+function animerFlash(cases, etape, cb) {
+  if(etape>=flashCouleurs.length){ cb(); return; }
+  dessinerGrille(cases.map(([l,c,_])=>[l,c,flashCouleurs[etape]]));
+  setTimeout(()=>animerFlash(cases,etape+1,cb),55);
+}
+
+function animerEclatement(cases, etape, total, cb) {
+  if(etape>total){ dessinerGrille(); cb(); return; }
+  const ratio=1-(etape/total);
+  const ctx=getCtxGrille();
+  dessinerGrille();
+  for(const [l,c,couleur] of cases){
+    const marge=Math.floor((TC/2)*(1-ratio));
+    const x=c*TC+marge, y=l*TC+marge;
+    const w=TC-marge*2-3, h=TC-marge*2-3;
+    if(w>2&&h>2){
+      ctx.fillStyle=etape>total/2?'#aaddff':couleur;
+      ctx.globalAlpha=ratio;
+      ctx.beginPath(); roundRect(ctx,x,y,w,h,4); ctx.fill();
+      ctx.globalAlpha=1;
+      if(etape>2){
+        const ps=Math.max(2,Math.floor(5*ratio));
+        ctx.fillStyle='#ffffff'; ctx.globalAlpha=ratio;
+        for(const [px,py] of [[x,y],[x+w,y],[x,y+h],[x+w,y+h]]){
+          ctx.beginPath(); ctx.arc(px,py,ps,0,Math.PI*2); ctx.fill();
+        }
+        ctx.globalAlpha=1;
+      }
+    }
+  }
+  setTimeout(()=>animerEclatement(cases,etape+1,total,cb),28);
+}
+
+function verifierGameOver() {
+  for(const fd of formesActuelles){
+    if(!fd) continue;
+    for(let l=0;l<8;l++) for(let c=0;c<8;c++) if(peutPlacer(fd.forme,l,c)) return;
+  }
+  gameOver=true;
+  const ctx=getCtxGrille();
+  ctx.fillStyle='rgba(10,10,10,0.75)';
+  ctx.fillRect(0,0,TC*8,TC*8);
+  ctx.textAlign='center';
+  ctx.fillStyle='white'; ctx.font='bold '+Math.floor(TC*0.8)+'px Arial';
+  ctx.fillText('GAME OVER',TC*4,TC*4-10);
+  ctx.fillStyle='#ff69b4'; ctx.font=Math.floor(TC*0.4)+'px Arial';
+  ctx.fillText('Score final : '+score,TC*4,TC*4+28);
+  document.getElementById('btn-rejouer').style.display='inline-block';
+}
+
+let dragIdx=null;
+
+function getPos(e) {
+  if(e.touches&&e.touches.length) return {x:e.touches[0].clientX,y:e.touches[0].clientY};
+  if(e.changedTouches&&e.changedTouches.length) return {x:e.changedTouches[0].clientX,y:e.changedTouches[0].clientY};
+  return {x:e.clientX,y:e.clientY};
+}
+
+function getGrilleRect() {
+  return document.getElementById('canvas-grille').getBoundingClientRect();
+}
+
+function getGrilleCase(mx, my, forme) {
+  const rect=getGrilleRect();
+  const minC=Math.min(...forme.map(f=>f[1])), maxC=Math.max(...forme.map(f=>f[1]));
+  const minL=Math.min(...forme.map(f=>f[0])), maxL=Math.max(...forme.map(f=>f[0]));
+  const cxOff=(minC+maxC)/2*TC+TC/2;
+  const cyOff=(minL+maxL)/2*TC+TC/2;
+  const col=Math.floor((mx-rect.left-cxOff+TC/2)/TC);
+  const lig=Math.floor((my-rect.top-cyOff+TC/2)/TC);
+  return {col,lig};
+}
+
+function setupDrag(fc, idx) {
+  const start=(e)=>{
+    if(animEnCours||gameOver||!formesActuelles[idx]) return;
+    e.preventDefault();
+    dragIdx=idx;
+  };
+  fc.addEventListener('mousedown',start);
+  fc.addEventListener('touchstart',start,{passive:false});
+}
+
+function onMove(e) {
+  if(dragIdx===null||animEnCours) return;
+  e.preventDefault();
+  const fd=formesActuelles[dragIdx];
+  if(!fd) return;
+  const {x:mx,y:my}=getPos(e);
+  const ctx=getCtxDrag();
+  const dc=document.getElementById('drag-canvas');
+  ctx.clearRect(0,0,dc.width,dc.height);
+  const rect=getGrilleRect();
+  const forme=fd.forme;
+  const minC=Math.min(...forme.map(f=>f[1])), maxC=Math.max(...forme.map(f=>f[1]));
+  const minL=Math.min(...forme.map(f=>f[0])), maxL=Math.max(...forme.map(f=>f[0]));
+  const cxOff=(minC+maxC)/2*TC+TC/2;
+  const cyOff=(minL+maxL)/2*TC+TC/2;
+  const ox=mx-rect.left-cxOff;
+  const oy=my-rect.top-cyOff;
+  const {col,lig}=getGrilleCase(mx,my,forme);
+  const valide=peutPlacer(forme,lig,col);
+  dessinerBlocs(ctx,forme,ox,oy,TC,valide?fd.couleur:'#ff4444',0.88,valide?'#ffffff':'#ff3333');
+}
+
+function onUp(e) {
+  if(dragIdx===null) return;
+  const ctx=getCtxDrag();
+  const dc=document.getElementById('drag-canvas');
+  ctx.clearRect(0,0,dc.width,dc.height);
+  if(animEnCours||gameOver){ dragIdx=null; return; }
+  const fd=formesActuelles[dragIdx];
+  if(!fd){ dragIdx=null; return; }
+  const {x:mx,y:my}=getPos(e);
+  const {col,lig}=getGrilleCase(mx,my,fd.forme);
+  const idx=dragIdx;
+  dragIdx=null;
+  if(!peutPlacer(fd.forme,lig,col)){ dessinerGrille(); return; }
+  for(const [dl,dc] of fd.forme) grille[lig+dl][col+dc]=fd.couleur;
+  formesActuelles[idx]=null;
+  animEnCours=true;
+  dessinerGrille();
+  verifierEtAnimer(()=>{
+    animEnCours=false;
+    if(formesActuelles.every(f=>!f)) formesActuelles=[rndForme(),rndForme(),rndForme()];
+    dessinerFormes();
+    verifierGameOver();
+  });
+}
+
+document.addEventListener('mousemove',onMove);
+document.addEventListener('touchmove',onMove,{passive:false});
+document.addEventListener('mouseup',onUp);
+document.addEventListener('touchend',onUp);
+
+for(let i=0;i<3;i++) setupDrag(document.getElementById('fc'+i),i);
+document.getElementById('btn-rejouer').addEventListener('click',init);
+window.addEventListener('resize',()=>{ init(); });
+init();
+</script>
+</body>
+</html>
